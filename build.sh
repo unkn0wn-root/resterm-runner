@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OUT_DIR="$ROOT_DIR/bin"
+
+mkdir -p "$OUT_DIR"
+
+VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+DATE=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+
+LDFLAGS="-s -w -X 'main.version=${VERSION}' -X 'main.commit=${COMMIT}' -X 'main.date=${DATE}'"
+
+platforms=(
+  "darwin amd64"
+  "darwin arm64"
+  "linux amd64"
+  "linux arm64"
+  "windows amd64"
+  "windows arm64"
+)
+
+for platform in "${platforms[@]}"; do
+  read -r goos goarch <<<"$platform"
+
+  case "$goos" in
+    darwin) goos_label="Darwin" ;;
+    linux) goos_label="Linux" ;;
+    windows) goos_label="Windows" ;;
+    *) goos_label="$goos" ;;
+  esac
+
+  case "$goarch" in
+    amd64) goarch_label="x86_64" ;;
+    arm64) goarch_label="arm64" ;;
+    *) goarch_label="$goarch" ;;
+  esac
+
+  out="$OUT_DIR/resterm-run_${goos_label}_${goarch_label}"
+  if [[ "$goos" == "windows" ]]; then
+    out+=".exe"
+  fi
+
+  echo "Building $out (version: $VERSION)"
+  GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags "$LDFLAGS" -o "$out" .
+done
+
+echo ""
+echo "Build complete! Version: $VERSION"
