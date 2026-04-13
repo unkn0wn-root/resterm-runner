@@ -37,7 +37,7 @@ for platform in "${platforms[@]}"; do
     *) goarch_label="$goarch" ;;
   esac
 
-  out="$OUT_DIR/resterm-run_${goos_label}_${goarch_label}"
+  out="$OUT_DIR/resterm-runner_${goos_label}_${goarch_label}"
   if [[ "$goos" == "windows" ]]; then
     out+=".exe"
   fi

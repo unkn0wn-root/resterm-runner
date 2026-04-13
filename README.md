@@ -1,15 +1,15 @@
-# resterm-run
+# resterm-runner
 
 A headless CLI runner for [resterm](https://github.com/unkn0wn-root/resterm).
 
-Requests authored in resterm can be executed directly by `resterm-run` against any configured environment. This enables automated validation of API contracts, regression testing across deployments, and environment-level response comparison as part of a standard build or release process.
+Requests authored in resterm can be executed directly by `resterm-runner` against any configured environment. This enables automated validation of API contracts, regression testing across deployments, and environment-level response comparison as part of a standard build or release process.
 
 ## Install
 
-Download a prebuilt binary from the [releases](https://github.com/unkn0wn-root/resterm-run/releases) page, or build from source:
+Download a prebuilt binary from the [releases](https://github.com/unkn0wn-root/resterm-runner/releases) page, or build from source:
 
 ```sh
-go install github.com/unkn0wn-root/resterm-run@latest
+go install github.com/unkn0wn-root/resterm-runner@latest
 ```
 
 ## Usage
@@ -17,25 +17,25 @@ go install github.com/unkn0wn-root/resterm-run@latest
 Run a single named request:
 
 ```sh
-resterm-run --file api.http --request login
+resterm-runner --file api.http --request login
 ```
 
 Run all requests in a file against a specific environment:
 
 ```sh
-resterm-run --file api.http --env production --all
+resterm-runner --file api.http --env production --all
 ```
 
 Run requests matching a tag:
 
 ```sh
-resterm-run --file api.http --tag smoke --env staging
+resterm-runner --file api.http --tag smoke --env staging
 ```
 
 Compare the same request across two environments and generate a JUnit report:
 
 ```sh
-resterm-run --file api.http \
+resterm-runner --file api.http \
   --compare "dev,staging" \
   --compare-base staging \
   --report-junit results.xml
@@ -44,7 +44,7 @@ resterm-run --file api.http \
 Use a positional argument instead of `--file`:
 
 ```sh
-resterm-run api.http --all
+resterm-runner api.http --all
 ```
 
 ## Flags

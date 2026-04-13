@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/unkn0wn-root/resterm/api/headless"
+	"github.com/unkn0wn-root/resterm/headless"
 )
 
 type Opt struct {
@@ -60,6 +60,9 @@ type cmd struct {
 }
 
 func Run(args []string, opt Opt) error {
+	if err := validateWriters(opt); err != nil {
+		return err
+	}
 	c := newCmd(opt)
 	if err := c.fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -80,13 +83,7 @@ func newCmd(opt Opt) *cmd {
 		stderr:  opt.Stderr,
 	}
 	if c.use == "" {
-		c.use = "resterm-run"
-	}
-	if c.stdout == nil {
-		c.stdout = io.Discard
-	}
-	if c.stderr == nil {
-		c.stderr = io.Discard
+		c.use = "resterm-runner"
 	}
 
 	fs := flag.NewFlagSet(c.use, flag.ContinueOnError)
@@ -95,6 +92,13 @@ func newCmd(opt Opt) *cmd {
 	c.bind()
 	fs.Usage = c.usage
 	return c
+}
+
+func validateWriters(opt Opt) error {
+	if opt.Stdout == nil || opt.Stderr == nil {
+		return headless.ErrNilWriter
+	}
+	return nil
 }
 
 func (c *cmd) bind() {
@@ -121,7 +125,7 @@ func (c *cmd) bind() {
 	c.fs.StringVar(&c.compareBase, "compare-base", "", "Baseline environment for --compare")
 	c.fs.BoolVar(&c.all, "all", false, "Run all requests in the file")
 	c.fs.BoolVar(&c.profile, "profile", false, "Profile the selected request run(s)")
-	c.fs.BoolVar(&c.showVersion, "version", false, "Show resterm-run version")
+	c.fs.BoolVar(&c.showVersion, "version", false, "Show resterm-runner version")
 }
 
 func (c *cmd) usage() {

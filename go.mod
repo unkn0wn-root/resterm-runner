@@ -1,4 +1,4 @@
-module github.com/unkn0wn-root/resterm-run
+module github.com/unkn0wn-root/resterm-runner
 
 go 1.25.0
 

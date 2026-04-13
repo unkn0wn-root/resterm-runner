@@ -2,13 +2,17 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/unkn0wn-root/resterm/headless"
 )
 
 func TestRunHelpFlag(t *testing.T) {
@@ -16,7 +20,7 @@ func TestRunHelpFlag(t *testing.T) {
 	var errOut strings.Builder
 
 	err := Run([]string{"--help"}, Opt{
-		Use:    "resterm-run",
+		Use:    "resterm-runner",
 		Stdout: &out,
 		Stderr: &errOut,
 	})
@@ -26,7 +30,7 @@ func TestRunHelpFlag(t *testing.T) {
 	if strings.TrimSpace(out.String()) != "" {
 		t.Fatalf("expected empty stdout, got %q", out.String())
 	}
-	if !strings.Contains(errOut.String(), "Usage: resterm-run [flags] [file]") {
+	if !strings.Contains(errOut.String(), "Usage: resterm-runner [flags] [file]") {
 		t.Fatalf("expected usage in stderr, got %q", errOut.String())
 	}
 }
@@ -36,7 +40,7 @@ func TestRunVersionFlag(t *testing.T) {
 	var errOut strings.Builder
 
 	err := Run([]string{"--version"}, Opt{
-		Use:     "resterm-run",
+		Use:     "resterm-runner",
 		Version: "v1.2.3",
 		Commit:  "abc1234",
 		Date:    "2026-04-13 11:22:33 UTC",
@@ -50,7 +54,7 @@ func TestRunVersionFlag(t *testing.T) {
 		t.Fatalf("expected empty stderr, got %q", errOut.String())
 	}
 	got := out.String()
-	if !strings.Contains(got, "resterm-run v1.2.3") {
+	if !strings.Contains(got, "resterm-runner v1.2.3") {
 		t.Fatalf("expected version header, got %q", got)
 	}
 	if !strings.Contains(got, "commit: abc1234") {
@@ -80,7 +84,7 @@ func TestRunRequestSuccess(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	err := Run([]string{"--file", file}, Opt{
-		Use:    "resterm-run",
+		Use:    "resterm-runner",
 		Stdout: &out,
 		Stderr: &errOut,
 	})
@@ -115,7 +119,7 @@ func TestRunFailureExitCode(t *testing.T) {
 
 	var out strings.Builder
 	err := Run([]string{"--file", file}, Opt{
-		Use:    "resterm-run",
+		Use:    "resterm-runner",
 		Stdout: &out,
 		Stderr: &strings.Builder{},
 	})
@@ -145,12 +149,65 @@ func TestRunSelectorErrorReturnsCodeTwo(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	err := Run([]string{"--file", file}, Opt{Use: "resterm-run"})
+	err := Run([]string{"--file", file}, Opt{
+		Use:    "resterm-runner",
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
 	if err == nil {
 		t.Fatal("expected selector error")
 	}
 	if code := ExitCode(err); code != 2 {
 		t.Fatalf("expected exit code 2, got %d", code)
+	}
+}
+
+func TestRunNilWriterReturnsErrNilWriter(t *testing.T) {
+	err := Run(nil, Opt{
+		Use:    "resterm-runner",
+		Stdout: io.Discard,
+	})
+	if !errors.Is(err, headless.ErrNilWriter) {
+		t.Fatalf("Run with nil stderr: got %v want %v", err, headless.ErrNilWriter)
+	}
+
+	err = Run(nil, Opt{
+		Use:    "resterm-runner",
+		Stderr: io.Discard,
+	})
+	if !errors.Is(err, headless.ErrNilWriter) {
+		t.Fatalf("Run with nil stdout: got %v want %v", err, headless.ErrNilWriter)
+	}
+}
+
+func TestRunHeadlessUsageErrorReturnsCodeTwo(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "env.http")
+	src := strings.Join([]string{
+		"# @name ok",
+		"GET https://example.com",
+		"",
+	}, "\n")
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	err := Run([]string{
+		"--file", file,
+		"--env", "$shared",
+	}, Opt{
+		Use:    "resterm-runner",
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+	if err == nil {
+		t.Fatal("expected usage error")
+	}
+	if code := ExitCode(err); code != 2 {
+		t.Fatalf("expected exit code 2, got %d", code)
+	}
+	if !headless.IsUsageError(err) {
+		t.Fatalf("expected headless usage error, got %v", err)
 	}
 }
 
@@ -196,7 +253,7 @@ func TestRunCompareWritesJSONReport(t *testing.T) {
 		"--compare-base", "stage",
 		"--report-json", report,
 	}, Opt{
-		Use:    "resterm-run",
+		Use:    "resterm-runner",
 		Stdout: &out,
 		Stderr: &errOut,
 	})

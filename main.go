@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/unkn0wn-root/resterm-run/internal/cli"
+	"github.com/unkn0wn-root/resterm-runner/internal/cli"
 )
 
 var (
@@ -22,7 +22,7 @@ func main() {
 
 func run(args []string) error {
 	return cli.Run(args, cli.Opt{
-		Use:     "resterm-run",
+		Use:     "resterm-runner",
 		Version: version,
 		Commit:  commit,
 		Date:    date,
