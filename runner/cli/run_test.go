@@ -70,7 +70,9 @@ func TestRunVersionFlag(t *testing.T) {
 
 func TestRunRequestSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"ok":true}`)
+		if _, err := fmt.Fprint(w, `{"ok":true}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -101,7 +103,9 @@ func TestRunRequestSuccess(t *testing.T) {
 
 func TestRunFailureExitCode(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"ok":true}`)
+		if _, err := fmt.Fprint(w, `{"ok":true}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -215,9 +219,13 @@ func TestRunCompareWritesJSONReport(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/dev":
-			fmt.Fprint(w, `{"env":"dev"}`)
+			if _, err := fmt.Fprint(w, `{"env":"dev"}`); err != nil {
+				t.Fatalf("write /dev response: %v", err)
+			}
 		case "/stage":
-			fmt.Fprint(w, `{"env":"stage"}`)
+			if _, err := fmt.Fprint(w, `{"env":"stage"}`); err != nil {
+				t.Fatalf("write /stage response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
