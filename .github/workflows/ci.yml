@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Download modules
+        run: go mod download
+      - name: Run tests
+        run: go test ./...
+      - name: Install golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Run golangci-lint
+        run: golangci-lint run
+
+  release-builds:
+    if: github.event_name == 'release'
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        goos: [linux, windows, darwin]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Download modules
+        run: go mod download
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          VERSION="${GITHUB_REF_NAME}"
+          COMMIT="${GITHUB_SHA::7}"
+          DATE="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+          LDFLAGS="-s -w -X 'main.version=${VERSION}' -X 'main.commit=${COMMIT}' -X 'main.date=${DATE}'"
+
+          case "$GOOS" in
+            darwin) goos_label="Darwin" ;;
+            linux) goos_label="Linux" ;;
+            windows) goos_label="Windows" ;;
+            *) goos_label="$GOOS" ;;
+          esac
+
+          case "$GOARCH" in
+            amd64) goarch_label="x86_64" ;;
+            arm64) goarch_label="arm64" ;;
+            *) goarch_label="$GOARCH" ;;
+          esac
+
+          output="dist/resterm-runner_${goos_label}_${goarch_label}"
+          if [ "$GOOS" = "windows" ]; then
+            output="${output}.exe"
+          fi
+
+          echo "Building version $VERSION"
+          GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath -ldflags "$LDFLAGS" -o "$output" .
+          sha256sum "$output" | awk '{print $1}' > "${output}.sha256"
+      - name: Upload release artifacts
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/*
