@@ -2,13 +2,13 @@ package cli
 
 import "errors"
 
+type exitCoder interface {
+	ExitCode() int
+}
+
 type ExitErr struct {
 	Err  error
 	Code int
-}
-
-type exitCoder interface {
-	ExitCode() int
 }
 
 func (e ExitErr) Error() string {

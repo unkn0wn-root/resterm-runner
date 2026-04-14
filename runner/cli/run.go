@@ -74,11 +74,12 @@ func Run(args []string, opt Opt) error {
 }
 
 func newCmd(opt Opt) *cmd {
+	opt = opt.trimmed()
 	c := &cmd{
-		use:     strings.TrimSpace(opt.Use),
-		version: strings.TrimSpace(opt.Version),
-		commit:  strings.TrimSpace(opt.Commit),
-		date:    strings.TrimSpace(opt.Date),
+		use:     opt.Use,
+		version: opt.Version,
+		commit:  opt.Commit,
+		date:    opt.Date,
 		stdout:  opt.Stdout,
 		stderr:  opt.Stderr,
 	}
@@ -148,7 +149,7 @@ func (c *cmd) run() error {
 			Code: 2,
 		}
 	}
-	if strings.TrimSpace(c.filePath) == "" {
+	if isBlank(c.filePath) {
 		return ExitErr{Err: errors.New("run: --file is required"), Code: 2}
 	}
 
@@ -222,13 +223,15 @@ func writeJUnit(path string, rep *headless.Report) error {
 }
 
 func writeReport(path string, fn func(io.Writer) error) (err error) {
-	path = strings.TrimSpace(path)
+	path = trim(path)
 	if path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+
+	if merr := os.MkdirAll(filepath.Dir(path), 0o755); merr != nil {
+		return merr
 	}
+
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -241,10 +244,6 @@ func writeReport(path string, fn func(io.Writer) error) (err error) {
 	return fn(f)
 }
 
-func boolPtr(v bool) *bool {
-	return &v
-}
-
 func (c *cmd) printVersion() error {
 	if _, err := fmt.Fprintf(c.stdout, "%s %s\n", c.use, c.version); err != nil {
 		return err
@@ -255,7 +254,8 @@ func (c *cmd) printVersion() error {
 	if _, err := fmt.Fprintf(c.stdout, "  built:  %s\n", c.date); err != nil {
 		return err
 	}
-	sum, err := executableChecksum()
+
+	sum, err := checksum()
 	if err != nil {
 		_, werr := fmt.Fprintf(c.stdout, "  sha256: unavailable (%v)\n", err)
 		return werr
@@ -264,15 +264,17 @@ func (c *cmd) printVersion() error {
 	return err
 }
 
-func executableChecksum() (string, error) {
+func checksum() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return "", err
 	}
+
 	exe, err = filepath.EvalSymlinks(exe)
 	if err != nil {
 		return "", err
 	}
+
 	f, err := os.Open(exe)
 	if err != nil {
 		return "", err
@@ -284,4 +286,8 @@ func executableChecksum() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }

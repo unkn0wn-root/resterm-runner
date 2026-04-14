@@ -2,7 +2,7 @@
 
 A headless CLI runner for [resterm](https://github.com/unkn0wn-root/resterm).
 
-Requests authored in resterm can be executed directly by `resterm-runner` against any configured environment. This enables automated validation of API contracts, regression testing across deployments, and environment-level response comparison as part of a standard build or release process.
+Requests created in resterm can be executed directly by `resterm-runner` against any configured environment. This enables automated validation of API contracts, regression testing across deployments, and environment-level response comparison as part of a standard build or release process.
 
 ## Install
 

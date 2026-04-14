@@ -27,7 +27,7 @@ func TestRunHelpFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run --help: %v", err)
 	}
-	if strings.TrimSpace(out.String()) != "" {
+	if !isBlank(out.String()) {
 		t.Fatalf("expected empty stdout, got %q", out.String())
 	}
 	if !strings.Contains(errOut.String(), "Usage: resterm-runner [flags] [file]") {
@@ -50,7 +50,7 @@ func TestRunVersionFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run --version: %v", err)
 	}
-	if strings.TrimSpace(errOut.String()) != "" {
+	if !isBlank(errOut.String()) {
 		t.Fatalf("expected empty stderr, got %q", errOut.String())
 	}
 	got := out.String()
@@ -91,7 +91,7 @@ func TestRunRequestSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run request: %v", err)
 	}
-	if strings.TrimSpace(errOut.String()) != "" {
+	if !isBlank(errOut.String()) {
 		t.Fatalf("expected empty stderr, got %q", errOut.String())
 	}
 	if !strings.Contains(out.String(), "PASS GET ok") {
@@ -260,7 +260,7 @@ func TestRunCompareWritesJSONReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run compare: %v", err)
 	}
-	if strings.TrimSpace(errOut.String()) != "" {
+	if !isBlank(errOut.String()) {
 		t.Fatalf("expected empty stderr, got %q", errOut.String())
 	}
 	if !strings.Contains(out.String(), "PASS COMPARE cmp") {

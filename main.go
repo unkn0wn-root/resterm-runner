@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/unkn0wn-root/resterm-runner/internal/cli"
+	"github.com/unkn0wn-root/resterm-runner/runner/cli"
 )
 
 var (
