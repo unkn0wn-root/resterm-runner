@@ -2,7 +2,7 @@ module github.com/unkn0wn-root/resterm-runner
 
 go 1.25.0
 
-require github.com/unkn0wn-root/resterm v0.0.0
+require github.com/unkn0wn-root/resterm v0.27.1
 
 require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
@@ -79,5 +79,3 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-replace github.com/unkn0wn-root/resterm => ../resterm
