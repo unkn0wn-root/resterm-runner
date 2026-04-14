@@ -10,11 +10,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
 	"github.com/unkn0wn-root/resterm/headless"
 )
+
+var readBuildInfo = debug.ReadBuildInfo
 
 type Opt struct {
 	Use     string
@@ -75,6 +78,7 @@ func Run(args []string, opt Opt) error {
 
 func newCmd(opt Opt) *cmd {
 	opt = opt.trimmed()
+	opt = resolveBuildMeta(opt)
 	c := &cmd{
 		use:     opt.Use,
 		version: opt.Version,
@@ -100,6 +104,100 @@ func validateWriters(opt Opt) error {
 		return headless.ErrNilWriter
 	}
 	return nil
+}
+
+func resolveBuildMeta(opt Opt) Opt {
+	meta := runtimeBuildMeta()
+	if needsVersionFallback(opt.Version) && meta.Version != "" {
+		opt.Version = meta.Version
+	}
+	if needsCommitFallback(opt.Commit) && meta.Commit != "" {
+		opt.Commit = meta.Commit
+	}
+	if needsDateFallback(opt.Date) && meta.Date != "" {
+		opt.Date = meta.Date
+	}
+	return opt
+}
+
+type buildMeta struct {
+	Version string
+	Commit  string
+	Date    string
+}
+
+func runtimeBuildMeta() buildMeta {
+	info, ok := readBuildInfo()
+	if !ok {
+		return buildMeta{}
+	}
+	return buildMetaFromInfo(info)
+}
+
+func buildMetaFromInfo(info *debug.BuildInfo) buildMeta {
+	if info == nil {
+		return buildMeta{}
+	}
+
+	meta := buildMeta{}
+	if version := trim(info.Main.Version); version != "" && version != "(devel)" {
+		meta.Version = version
+	}
+
+	if revision := trim(buildSetting(info, "vcs.revision")); revision != "" {
+		meta.Commit = shortRevision(revision)
+		if buildSetting(info, "vcs.modified") == "true" {
+			meta.Commit += "-dirty"
+		}
+	}
+
+	meta.Date = formatBuildTime(buildSetting(info, "vcs.time"))
+	return meta
+}
+
+func buildSetting(info *debug.BuildInfo, key string) string {
+	for _, setting := range info.Settings {
+		if setting.Key == key {
+			return trim(setting.Value)
+		}
+	}
+	return ""
+}
+
+func shortRevision(revision string) string {
+	revision = trim(revision)
+	if len(revision) <= 7 {
+		return revision
+	}
+	return revision[:7]
+}
+
+func formatBuildTime(raw string) string {
+	raw = trim(raw)
+	if raw == "" {
+		return ""
+	}
+
+	ts, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return raw
+	}
+	return ts.UTC().Format("2006-01-02 15:04:05 MST")
+}
+
+func needsVersionFallback(version string) bool {
+	version = trim(version)
+	return version == "" || version == "dev" || version == "(devel)"
+}
+
+func needsCommitFallback(commit string) bool {
+	commit = trim(commit)
+	return commit == "" || commit == "unknown"
+}
+
+func needsDateFallback(date string) bool {
+	date = trim(date)
+	return date == "" || date == "unknown"
 }
 
 func (c *cmd) bind() {

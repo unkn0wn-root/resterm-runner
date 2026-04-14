@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -65,6 +66,96 @@ func TestRunVersionFlag(t *testing.T) {
 	}
 	if !strings.Contains(got, "sha256: ") {
 		t.Fatalf("expected sha256 line, got %q", got)
+	}
+}
+
+func TestRunVersionFlagUsesRuntimeBuildInfoFallback(t *testing.T) {
+	prev := readBuildInfo
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{
+			Main: debug.Module{
+				Version: "v0.27.1",
+			},
+			Settings: []debug.BuildSetting{
+				{Key: "vcs.revision", Value: "ce69a7317dd0768b4e48c907d9c1ba6c63078b2d"},
+				{Key: "vcs.time", Value: "2026-04-14T10:20:30Z"},
+			},
+		}, true
+	}
+	t.Cleanup(func() {
+		readBuildInfo = prev
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+	err := Run([]string{"--version"}, Opt{
+		Use:     "resterm-runner",
+		Version: "dev",
+		Commit:  "unknown",
+		Date:    "unknown",
+		Stdout:  &out,
+		Stderr:  &errOut,
+	})
+	if err != nil {
+		t.Fatalf("Run --version with build info fallback: %v", err)
+	}
+	if !isBlank(errOut.String()) {
+		t.Fatalf("expected empty stderr, got %q", errOut.String())
+	}
+	got := out.String()
+	if !strings.Contains(got, "resterm-runner v0.27.1") {
+		t.Fatalf("expected fallback version, got %q", got)
+	}
+	if !strings.Contains(got, "commit: ce69a73") {
+		t.Fatalf("expected fallback commit, got %q", got)
+	}
+	if !strings.Contains(got, "built:  2026-04-14 10:20:30 UTC") {
+		t.Fatalf("expected fallback build time, got %q", got)
+	}
+}
+
+func TestRunVersionFlagPrefersExplicitBuildMetadata(t *testing.T) {
+	prev := readBuildInfo
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{
+			Main: debug.Module{
+				Version: "v9.9.9",
+			},
+			Settings: []debug.BuildSetting{
+				{Key: "vcs.revision", Value: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"},
+				{Key: "vcs.time", Value: "2026-04-14T10:20:30Z"},
+			},
+		}, true
+	}
+	t.Cleanup(func() {
+		readBuildInfo = prev
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+	err := Run([]string{"--version"}, Opt{
+		Use:     "resterm-runner",
+		Version: "v1.2.3",
+		Commit:  "abc1234",
+		Date:    "2026-04-13 11:22:33 UTC",
+		Stdout:  &out,
+		Stderr:  &errOut,
+	})
+	if err != nil {
+		t.Fatalf("Run --version with explicit metadata: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "resterm-runner v1.2.3") {
+		t.Fatalf("expected explicit version, got %q", got)
+	}
+	if !strings.Contains(got, "commit: abc1234") {
+		t.Fatalf("expected explicit commit, got %q", got)
+	}
+	if !strings.Contains(got, "built:  2026-04-13 11:22:33 UTC") {
+		t.Fatalf("expected explicit build time, got %q", got)
+	}
+	if strings.Contains(got, "v9.9.9") || strings.Contains(got, "deadbee") {
+		t.Fatalf("expected explicit metadata to win over build info, got %q", got)
 	}
 }
 
