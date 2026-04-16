@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/unkn0wn-root/resterm/headless"
 )
@@ -303,6 +305,100 @@ func TestRunHeadlessUsageErrorReturnsCodeTwo(t *testing.T) {
 	}
 	if !headless.IsUsageError(err) {
 		t.Fatalf("expected headless usage error, got %v", err)
+	}
+}
+
+func TestRunTimeoutCancelsWholeRun(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(250 * time.Millisecond):
+			if _, err := fmt.Fprint(w, `{"ok":true}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "slow.http")
+	src := fmt.Sprintf("# @name slow\nGET %s\n", srv.URL)
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	var out strings.Builder
+	err := Run([]string{
+		"--file", file,
+		"--timeout", "1s",
+		"--run-timeout", "25ms",
+	}, Opt{
+		Use:    "resterm-runner",
+		Stdout: &out,
+		Stderr: &strings.Builder{},
+	})
+	if err == nil {
+		t.Fatal("expected run timeout failure")
+	}
+	if code := ExitCode(err); code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	if !strings.Contains(out.String(), "slow") {
+		t.Fatalf("expected canceled run output, got %q", out.String())
+	}
+}
+
+func TestRunCanceledContextCancelsWholeRun(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(250 * time.Millisecond):
+			if _, err := fmt.Fprint(w, `{"ok":true}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "slow.http")
+	src := fmt.Sprintf("# @name slow\nGET %s\n", srv.URL)
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var out strings.Builder
+	err := Run([]string{"--file", file}, Opt{
+		Use:     "resterm-runner",
+		Stdout:  &out,
+		Stderr:  &strings.Builder{},
+		Context: ctx,
+	})
+	if err == nil {
+		t.Fatal("expected canceled run failure")
+	}
+	if code := ExitCode(err); code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	if !strings.Contains(out.String(), "slow") {
+		t.Fatalf("expected canceled run output, got %q", out.String())
+	}
+}
+
+func TestRunNegativeRunTimeoutReturnsCodeTwo(t *testing.T) {
+	err := Run([]string{"--run-timeout", "-1s"}, Opt{
+		Use:    "resterm-runner",
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+	if err == nil {
+		t.Fatal("expected usage error")
+	}
+	if code := ExitCode(err); code != 2 {
+		t.Fatalf("expected exit code 2, got %d", code)
 	}
 }
 

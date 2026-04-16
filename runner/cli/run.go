@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/unkn0wn-root/resterm/headless"
@@ -26,6 +28,7 @@ type Opt struct {
 	Date    string
 	Stdout  io.Writer
 	Stderr  io.Writer
+	Context context.Context
 }
 
 type cmd struct {
@@ -36,6 +39,7 @@ type cmd struct {
 	date        string
 	stdout      io.Writer
 	stderr      io.Writer
+	ctx         context.Context
 	filePath    string
 	envName     string
 	envFile     string
@@ -45,6 +49,7 @@ type cmd struct {
 	workspace   string
 	stateDir    string
 	timeout     time.Duration
+	runTimeout  time.Duration
 	insecure    bool
 	follow      bool
 	proxyURL    string
@@ -86,6 +91,7 @@ func newCmd(opt Opt) *cmd {
 		date:    opt.Date,
 		stdout:  opt.Stdout,
 		stderr:  opt.Stderr,
+		ctx:     opt.Context,
 	}
 	if c.use == "" {
 		c.use = "resterm-runner"
@@ -210,6 +216,7 @@ func (c *cmd) bind() {
 	c.fs.StringVar(&c.workspace, "workspace", "", "Workspace directory to scan for request files")
 	c.fs.StringVar(&c.stateDir, "state-dir", "", "Directory for persisted runner state")
 	c.fs.DurationVar(&c.timeout, "timeout", 30*time.Second, "Request timeout")
+	c.fs.DurationVar(&c.runTimeout, "run-timeout", 0, "Whole-run timeout (0 disables)")
 	c.fs.BoolVar(&c.insecure, "insecure", false, "Skip TLS certificate verification")
 	c.fs.BoolVar(&c.follow, "follow", true, "Follow redirects")
 	c.fs.StringVar(&c.proxyURL, "proxy", "", "HTTP proxy URL")
@@ -244,6 +251,12 @@ func (c *cmd) run() error {
 	if c.showVersion {
 		return c.printVersion()
 	}
+	if c.runTimeout < 0 {
+		return ExitErr{
+			Err:  errors.New("run: --run-timeout must be >= 0"),
+			Code: 2,
+		}
+	}
 	if c.filePath == "" && len(c.fs.Args()) > 0 {
 		c.filePath = c.fs.Arg(0)
 	}
@@ -265,28 +278,37 @@ func (c *cmd) run() error {
 		}
 	}
 
-	rep, err := headless.Run(context.Background(), headless.Opt{
-		Version:        c.version,
-		FilePath:       c.filePath,
-		Workspace:      c.workspace,
-		Recursive:      c.recursive,
-		ArtifactDir:    c.artifactDir,
-		StateDir:       c.stateDir,
-		PersistGlobals: c.persistVars,
-		PersistAuth:    c.persistAuth,
-		History:        c.history,
-		EnvName:        c.envName,
-		EnvFile:        c.envFile,
-		CompareTargets: targets,
-		CompareBase:    c.compareBase,
-		Profile:        c.profile,
-		HTTP: headless.HTTPOpt{
-			Timeout:  c.timeout,
-			Follow:   boolPtr(c.follow),
-			Insecure: c.insecure,
-			Proxy:    c.proxyURL,
+	ctx, cancel := c.runContext()
+	defer cancel()
+
+	rep, err := headless.Run(ctx, headless.Options{
+		Version:       c.version,
+		FilePath:      c.filePath,
+		WorkspaceRoot: c.workspace,
+		Recursive:     c.recursive,
+		State: headless.StateOptions{
+			ArtifactDir:    c.artifactDir,
+			StateDir:       c.stateDir,
+			PersistGlobals: c.persistVars,
+			PersistAuth:    c.persistAuth,
+			History:        c.history,
 		},
-		Select: headless.Select{
+		Environment: headless.EnvironmentOptions{
+			Name:     c.envName,
+			FilePath: c.envFile,
+		},
+		Compare: headless.CompareOptions{
+			Targets: targets,
+			Base:    c.compareBase,
+		},
+		Profile: c.profile,
+		HTTP: headless.HTTPOptions{
+			Timeout:            c.timeout,
+			FollowRedirects:    boolPtr(c.follow),
+			InsecureSkipVerify: c.insecure,
+			ProxyURL:           c.proxyURL,
+		},
+		Selection: headless.Selection{
 			Request:  c.reqName,
 			Workflow: c.workflow,
 			Tag:      c.tag,
@@ -312,6 +334,25 @@ func (c *cmd) run() error {
 		return ExitErr{Err: errors.New("one or more requests failed"), Code: 1}
 	}
 	return nil
+}
+
+func (c *cmd) runContext() (context.Context, context.CancelFunc) {
+	ctx := c.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Tie the root run context to process cancellation and an optional wall-clock deadline.
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	if c.runTimeout <= 0 {
+		return ctx, stop
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, c.runTimeout)
+	return ctx, func() {
+		cancel()
+		stop()
+	}
 }
 
 func writeJSON(path string, rep *headless.Report) error {
