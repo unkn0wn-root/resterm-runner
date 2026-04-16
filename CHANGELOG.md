@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.1](https://github.com/unkn0wn-root/resterm-run/compare/v0.0.1...v0.1.1) (2026-04-16)
+
+
+### Features
+
+* add --run-timeout flag for whole-run deadline and adjust api ([3963da6](https://github.com/unkn0wn-root/resterm-run/commit/3963da623ad1470888061dc06072d1e27821b3b6))
+
 ### 0.0.1 (2026-04-14)
 
 
