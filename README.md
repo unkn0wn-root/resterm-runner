@@ -64,6 +64,7 @@ resterm-runner api.http --all
 | `--compare` | | Compare environments (comma or space separated) |
 | `--compare-base` | | Baseline environment for comparison |
 | `--timeout` | `30s` | Request timeout |
+| `--run-timeout` | `0` | Whole-run timeout; `0` disables it |
 | `--insecure` | `false` | Skip TLS certificate verification |
 | `--follow` | `true` | Follow redirects |
 | `--proxy` | | HTTP proxy URL |
@@ -84,7 +85,7 @@ resterm-runner api.http --all
 | Code | Meaning |
 |------|---------|
 | 0 | All requests passed |
-| 1 | One or more requests failed |
+| 1 | One or more requests failed or the run was canceled |
 | 2 | Usage or configuration error |
 
 ## License
