@@ -281,9 +281,9 @@ func (c *cmd) run() error {
 	ctx, cancel := c.runContext()
 	defer cancel()
 
-	rep, err := headless.Run(ctx, headless.Options{
+	pl, err := headless.Build(headless.Options{
 		Version:       c.version,
-		FilePath:      c.filePath,
+		Source:        headless.Source{Path: c.filePath},
 		WorkspaceRoot: c.workspace,
 		Recursive:     c.recursive,
 		State: headless.StateOptions{
@@ -301,7 +301,9 @@ func (c *cmd) run() error {
 			Targets: targets,
 			Base:    c.compareBase,
 		},
-		Profile: c.profile,
+		Profile: headless.ProfileOptions{
+			Enabled: c.profile,
+		},
 		HTTP: headless.HTTPOptions{
 			Timeout:            c.timeout,
 			FollowRedirects:    boolPtr(c.follow),
@@ -315,6 +317,13 @@ func (c *cmd) run() error {
 			All:      c.all,
 		},
 	})
+	if err != nil {
+		if headless.IsUsageError(err) {
+			return ExitErr{Err: fmt.Errorf("run: %w", err), Code: 2}
+		}
+		return err
+	}
+	rep, err := headless.RunPlan(ctx, pl)
 	if err != nil {
 		if headless.IsUsageError(err) {
 			return ExitErr{Err: fmt.Errorf("run: %w", err), Code: 2}
