@@ -1,3 +1,5 @@
 bin/
+dist/
 resterm-run
 resterm-runner
+resterm-runner.exe
