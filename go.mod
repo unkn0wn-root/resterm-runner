@@ -2,7 +2,7 @@ module github.com/unkn0wn-root/resterm-runner
 
 go 1.25.0
 
-require github.com/unkn0wn-root/resterm v0.29.2
+require github.com/unkn0wn-root/resterm v0.31.2
 
 require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect

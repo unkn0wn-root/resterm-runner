@@ -60,6 +60,7 @@ resterm-runner api.http --all
 | `--all` | `false` | Run all requests in the file |
 | `--compare` | | Compare environments (comma or space separated) |
 | `--compare-base` | | Baseline environment for comparison |
+| `--exit-code-mode` | `detailed` | Exit code mode: `detailed` or `summary` |
 | `--timeout` | `30s` | Request timeout |
 | `--run-timeout` | `0` | Whole-run timeout; `0` disables it |
 | `--insecure` | `false` | Skip TLS certificate verification |
@@ -79,11 +80,23 @@ resterm-runner api.http --all
 
 ## Exit codes
 
+Detailed mode is the default. Summary mode preserves the legacy report behavior: `0` when all requests pass, `1` when any request fails, and `2` for usage or configuration errors.
+
 | Code | Meaning |
 |------|---------|
 | 0 | All requests passed |
-| 1 | One or more requests failed or the run was canceled |
+| 1 | Assertion, trace budget, or generic request failure |
 | 2 | Usage or configuration error |
+| 3 | Internal or unknown failure |
+| 20 | Timeout |
+| 21 | Network failure |
+| 22 | TLS failure |
+| 23 | Authentication failure |
+| 24 | Script failure |
+| 25 | Filesystem failure |
+| 26 | Protocol failure |
+| 27 | Route failure |
+| 130 | Run canceled |
 
 ## License
 

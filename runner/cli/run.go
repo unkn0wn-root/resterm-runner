@@ -32,39 +32,40 @@ type Opt struct {
 }
 
 type cmd struct {
-	fs          *flag.FlagSet
-	use         string
-	version     string
-	commit      string
-	date        string
-	stdout      io.Writer
-	stderr      io.Writer
-	ctx         context.Context
-	filePath    string
-	envName     string
-	envFile     string
-	artifactDir string
-	reportJSON  string
-	reportJUnit string
-	workspace   string
-	stateDir    string
-	timeout     time.Duration
-	runTimeout  time.Duration
-	insecure    bool
-	follow      bool
-	proxyURL    string
-	recursive   bool
-	persistAuth bool
-	persistVars bool
-	history     bool
-	reqName     string
-	workflow    string
-	tag         string
-	compareRaw  string
-	compareBase string
-	all         bool
-	profile     bool
-	showVersion bool
+	fs           *flag.FlagSet
+	use          string
+	version      string
+	commit       string
+	date         string
+	stdout       io.Writer
+	stderr       io.Writer
+	ctx          context.Context
+	filePath     string
+	envName      string
+	envFile      string
+	artifactDir  string
+	reportJSON   string
+	reportJUnit  string
+	workspace    string
+	stateDir     string
+	timeout      time.Duration
+	runTimeout   time.Duration
+	insecure     bool
+	follow       bool
+	proxyURL     string
+	recursive    bool
+	persistAuth  bool
+	persistVars  bool
+	history      bool
+	reqName      string
+	workflow     string
+	tag          string
+	compareRaw   string
+	compareBase  string
+	exitCodeMode string
+	all          bool
+	profile      bool
+	showVersion  bool
 }
 
 func Run(args []string, opt Opt) error {
@@ -76,7 +77,7 @@ func Run(args []string, opt Opt) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return ExitErr{Err: err, Code: 2}
+		return ExitErr{Err: err, Code: headless.ExitUsage}
 	}
 	return c.run()
 }
@@ -229,6 +230,7 @@ func (c *cmd) bind() {
 	c.fs.StringVar(&c.tag, "tag", "", "Run requests with the given tag")
 	c.fs.StringVar(&c.compareRaw, "compare", "", "Compare environments (comma/space separated)")
 	c.fs.StringVar(&c.compareBase, "compare-base", "", "Baseline environment for --compare")
+	c.fs.StringVar(&c.exitCodeMode, "exit-code-mode", string(headless.ExitCodeDetailed), "Exit code mode: detailed or summary")
 	c.fs.BoolVar(&c.all, "all", false, "Run all requests in the file")
 	c.fs.BoolVar(&c.profile, "profile", false, "Profile the selected request run(s)")
 	c.fs.BoolVar(&c.showVersion, "version", false, "Show resterm-runner version")
@@ -254,7 +256,7 @@ func (c *cmd) run() error {
 	if c.runTimeout < 0 {
 		return ExitErr{
 			Err:  errors.New("run: --run-timeout must be >= 0"),
-			Code: 2,
+			Code: headless.ExitUsage,
 		}
 	}
 	if c.filePath == "" && len(c.fs.Args()) > 0 {
@@ -263,18 +265,26 @@ func (c *cmd) run() error {
 	if len(c.fs.Args()) > 1 {
 		return ExitErr{
 			Err:  fmt.Errorf("run: unexpected args: %s", strings.Join(c.fs.Args()[1:], " ")),
-			Code: 2,
+			Code: headless.ExitUsage,
 		}
 	}
 	if isBlank(c.filePath) {
-		return ExitErr{Err: errors.New("run: --file is required"), Code: 2}
+		return ExitErr{Err: errors.New("run: --file is required"), Code: headless.ExitUsage}
 	}
 
 	targets, err := parseCompare(c.compareRaw)
 	if err != nil {
 		return ExitErr{
 			Err:  fmt.Errorf("run: invalid --compare value: %w", err),
-			Code: 2,
+			Code: headless.ExitUsage,
+		}
+	}
+
+	exitCodeMode, err := parseExitCodeMode(c.exitCodeMode)
+	if err != nil {
+		return ExitErr{
+			Err:  fmt.Errorf("run: %w", err),
+			Code: headless.ExitUsage,
 		}
 	}
 
@@ -319,14 +329,14 @@ func (c *cmd) run() error {
 	})
 	if err != nil {
 		if headless.IsUsageError(err) {
-			return ExitErr{Err: fmt.Errorf("run: %w", err), Code: 2}
+			return ExitErr{Err: fmt.Errorf("run: %w", err), Code: headless.ExitUsage}
 		}
 		return err
 	}
 	rep, err := headless.RunPlan(ctx, pl)
 	if err != nil {
 		if headless.IsUsageError(err) {
-			return ExitErr{Err: fmt.Errorf("run: %w", err), Code: 2}
+			return ExitErr{Err: fmt.Errorf("run: %w", err), Code: headless.ExitUsage}
 		}
 		return err
 	}
@@ -339,10 +349,25 @@ func (c *cmd) run() error {
 	if err := writeJUnit(c.reportJUnit, rep); err != nil {
 		return fmt.Errorf("run: write junit report: %w", err)
 	}
-	if rep.Failed > 0 {
-		return ExitErr{Err: errors.New("one or more requests failed"), Code: 1}
+	if rep.HasFailures() {
+		return ExitErr{
+			Err:  errors.New("one or more requests failed"),
+			Code: rep.ExitCode(exitCodeMode),
+		}
 	}
 	return nil
+}
+
+func parseExitCodeMode(raw string) (headless.ExitCodeMode, error) {
+	mode := headless.ExitCodeMode(strings.ToLower(strings.TrimSpace(raw)))
+	switch mode {
+	case "", headless.ExitCodeDetailed:
+		return headless.ExitCodeDetailed, nil
+	case headless.ExitCodeSummary:
+		return headless.ExitCodeSummary, nil
+	default:
+		return "", fmt.Errorf("unsupported --exit-code-mode %q", raw)
+	}
 }
 
 func (c *cmd) runContext() (context.Context, context.CancelFunc) {
