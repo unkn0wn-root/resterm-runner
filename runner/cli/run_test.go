@@ -223,8 +223,8 @@ func TestRunFailureExitCode(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected run failure")
 	}
-	if code := ExitCode(err); code != 1 {
-		t.Fatalf("expected exit code 1, got %d", code)
+	if code := ExitCode(err); code != headless.ExitFailure {
+		t.Fatalf("expected exit code %d, got %d", headless.ExitFailure, code)
 	}
 	if !strings.Contains(out.String(), "FAIL GET bad") {
 		t.Fatalf("expected fail output, got %q", out.String())
@@ -254,8 +254,8 @@ func TestRunSelectorErrorReturnsCodeTwo(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected selector error")
 	}
-	if code := ExitCode(err); code != 2 {
-		t.Fatalf("expected exit code 2, got %d", code)
+	if code := ExitCode(err); code != headless.ExitUsage {
+		t.Fatalf("expected exit code %d, got %d", headless.ExitUsage, code)
 	}
 }
 
@@ -300,8 +300,8 @@ func TestRunHeadlessUsageErrorReturnsCodeTwo(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected usage error")
 	}
-	if code := ExitCode(err); code != 2 {
-		t.Fatalf("expected exit code 2, got %d", code)
+	if code := ExitCode(err); code != headless.ExitUsage {
+		t.Fatalf("expected exit code %d, got %d", headless.ExitUsage, code)
 	}
 	if !headless.IsUsageError(err) {
 		t.Fatalf("expected headless usage error, got %v", err)
@@ -340,11 +340,48 @@ func TestRunTimeoutCancelsWholeRun(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected run timeout failure")
 	}
-	if code := ExitCode(err); code != 1 {
-		t.Fatalf("expected exit code 1, got %d", code)
+	if code := ExitCode(err); code != headless.ExitTimeout {
+		t.Fatalf("expected exit code %d, got %d", headless.ExitTimeout, code)
 	}
 	if !strings.Contains(out.String(), "slow") {
 		t.Fatalf("expected canceled run output, got %q", out.String())
+	}
+}
+
+func TestRunSummaryExitCodeModeReturnsLegacyFailureCode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(250 * time.Millisecond):
+			if _, err := fmt.Fprint(w, `{"ok":true}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "slow.http")
+	src := fmt.Sprintf("# @name slow\nGET %s\n", srv.URL)
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	err := Run([]string{
+		"--file", file,
+		"--timeout", "1s",
+		"--run-timeout", "25ms",
+		"--exit-code-mode", "summary",
+	}, Opt{
+		Use:    "resterm-runner",
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+	if err == nil {
+		t.Fatal("expected run timeout failure")
+	}
+	if code := ExitCode(err); code != headless.ExitFailure {
+		t.Fatalf("expected exit code %d, got %d", headless.ExitFailure, code)
 	}
 }
 
@@ -380,11 +417,38 @@ func TestRunCanceledContextCancelsWholeRun(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected canceled run failure")
 	}
-	if code := ExitCode(err); code != 1 {
-		t.Fatalf("expected exit code 1, got %d", code)
+	if code := ExitCode(err); code != headless.ExitCanceled {
+		t.Fatalf("expected exit code %d, got %d", headless.ExitCanceled, code)
 	}
 	if !strings.Contains(out.String(), "slow") {
 		t.Fatalf("expected canceled run output, got %q", out.String())
+	}
+}
+
+func TestRunInvalidExitCodeModeReturnsCodeTwo(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "ok.http")
+	src := "# @name ok\nGET https://example.com\n"
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	err := Run([]string{
+		"--file", file,
+		"--exit-code-mode", "legacy",
+	}, Opt{
+		Use:    "resterm-runner",
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+	if err == nil {
+		t.Fatal("expected exit-code-mode error")
+	}
+	if code := ExitCode(err); code != headless.ExitUsage {
+		t.Fatalf("expected exit code %d, got %d", headless.ExitUsage, code)
+	}
+	if !strings.Contains(err.Error(), "unsupported --exit-code-mode") {
+		t.Fatalf("expected exit-code-mode error, got %v", err)
 	}
 }
 
@@ -397,8 +461,8 @@ func TestRunNegativeRunTimeoutReturnsCodeTwo(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected usage error")
 	}
-	if code := ExitCode(err); code != 2 {
-		t.Fatalf("expected exit code 2, got %d", code)
+	if code := ExitCode(err); code != headless.ExitUsage {
+		t.Fatalf("expected exit code %d, got %d", headless.ExitUsage, code)
 	}
 }
 
