@@ -1,9 +1,8 @@
 package cli
 
 import (
+	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -19,7 +17,7 @@ import (
 	"github.com/unkn0wn-root/resterm/headless"
 )
 
-var readBuildInfo = debug.ReadBuildInfo
+const defaultUse = "resterm-runner"
 
 type Opt struct {
 	Use     string
@@ -32,220 +30,113 @@ type Opt struct {
 }
 
 type cmd struct {
-	fs           *flag.FlagSet
-	use          string
-	version      string
-	commit       string
-	date         string
-	stdout       io.Writer
-	stderr       io.Writer
-	ctx          context.Context
-	filePath     string
-	envName      string
-	envFile      string
-	artifactDir  string
-	reportJSON   string
-	reportJUnit  string
-	workspace    string
-	stateDir     string
-	timeout      time.Duration
-	runTimeout   time.Duration
-	insecure     bool
-	follow       bool
-	proxyURL     string
-	recursive    bool
-	persistAuth  bool
-	persistVars  bool
-	history      bool
-	reqName      string
-	workflow     string
-	tag          string
+	Opt
+	fs *flag.FlagSet
+
+	filePath  string
+	workspace string
+	recursive bool
+	reqName   string
+	workflow  string
+	tag       string
+	all       bool
+
+	envName   string
+	envGroups groupFlags
+	envFile   string
+
 	compareRaw   string
 	compareBase  string
+	compareGroup string
+
+	timeout  time.Duration
+	insecure bool
+	follow   bool
+	proxyURL string
+
+	artifactDir string
+	reportJSON  string
+	reportJUnit string
+	stateDir    string
+	persistAuth bool
+	persistVars bool
+	history     bool
+
+	runTimeout   time.Duration
 	exitCodeMode string
-	all          bool
 	profile      bool
+	failFast     bool
 	showVersion  bool
 }
 
 func Run(args []string, opt Opt) error {
-	if err := validateWriters(opt); err != nil {
-		return err
+	if opt.Stdout == nil || opt.Stderr == nil {
+		return headless.ErrNilWriter
 	}
+
 	c := newCmd(opt)
 	if err := c.fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return ExitErr{Err: err, Code: headless.ExitUsage}
+		return usageErr("%w", err)
 	}
 	return c.run()
 }
 
 func newCmd(opt Opt) *cmd {
-	opt = opt.trimmed()
-	opt = resolveBuildMeta(opt)
-	c := &cmd{
-		use:     opt.Use,
-		version: opt.Version,
-		commit:  opt.Commit,
-		date:    opt.Date,
-		stdout:  opt.Stdout,
-		stderr:  opt.Stderr,
-		ctx:     opt.Context,
-	}
-	if c.use == "" {
-		c.use = "resterm-runner"
-	}
+	opt.Use = cmp.Or(strings.TrimSpace(opt.Use), defaultUse)
+	opt.Version = strings.TrimSpace(opt.Version)
+	opt.Commit = strings.TrimSpace(opt.Commit)
+	opt.Date = strings.TrimSpace(opt.Date)
 
-	fs := flag.NewFlagSet(c.use, flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
-	c.fs = fs
+	c := &cmd{Opt: resolveBuildMeta(opt)}
+	c.fs = flag.NewFlagSet(c.Use, flag.ContinueOnError)
+	c.fs.SetOutput(c.Stderr)
+	c.fs.Usage = c.usage
 	c.bind()
-	fs.Usage = c.usage
 	return c
-}
-
-func validateWriters(opt Opt) error {
-	if opt.Stdout == nil || opt.Stderr == nil {
-		return headless.ErrNilWriter
-	}
-	return nil
-}
-
-func resolveBuildMeta(opt Opt) Opt {
-	meta := runtimeBuildMeta()
-	if needsVersionFallback(opt.Version) && meta.Version != "" {
-		opt.Version = meta.Version
-	}
-	if needsCommitFallback(opt.Commit) && meta.Commit != "" {
-		opt.Commit = meta.Commit
-	}
-	if needsDateFallback(opt.Date) && meta.Date != "" {
-		opt.Date = meta.Date
-	}
-	return opt
-}
-
-type buildMeta struct {
-	Version string
-	Commit  string
-	Date    string
-}
-
-func runtimeBuildMeta() buildMeta {
-	info, ok := readBuildInfo()
-	if !ok {
-		return buildMeta{}
-	}
-	return buildMetaFromInfo(info)
-}
-
-func buildMetaFromInfo(info *debug.BuildInfo) buildMeta {
-	if info == nil {
-		return buildMeta{}
-	}
-
-	meta := buildMeta{}
-	if version := trim(info.Main.Version); version != "" && version != "(devel)" {
-		meta.Version = version
-	}
-
-	if revision := trim(buildSetting(info, "vcs.revision")); revision != "" {
-		meta.Commit = shortRevision(revision)
-		if buildSetting(info, "vcs.modified") == "true" {
-			meta.Commit += "-dirty"
-		}
-	}
-
-	meta.Date = formatBuildTime(buildSetting(info, "vcs.time"))
-	return meta
-}
-
-func buildSetting(info *debug.BuildInfo, key string) string {
-	for _, setting := range info.Settings {
-		if setting.Key == key {
-			return trim(setting.Value)
-		}
-	}
-	return ""
-}
-
-func shortRevision(revision string) string {
-	revision = trim(revision)
-	if len(revision) <= 7 {
-		return revision
-	}
-	return revision[:7]
-}
-
-func formatBuildTime(raw string) string {
-	raw = trim(raw)
-	if raw == "" {
-		return ""
-	}
-
-	ts, err := time.Parse(time.RFC3339, raw)
-	if err != nil {
-		return raw
-	}
-	return ts.UTC().Format("2006-01-02 15:04:05 MST")
-}
-
-func needsVersionFallback(version string) bool {
-	version = trim(version)
-	return version == "" || version == "dev" || version == "(devel)"
-}
-
-func needsCommitFallback(commit string) bool {
-	commit = trim(commit)
-	return commit == "" || commit == "unknown"
-}
-
-func needsDateFallback(date string) bool {
-	date = trim(date)
-	return date == "" || date == "unknown"
 }
 
 func (c *cmd) bind() {
 	c.fs.StringVar(&c.filePath, "file", "", "Path to .http/.rest file to run")
-	c.fs.StringVar(&c.envName, "env", "", "Environment name to use")
-	c.fs.StringVar(&c.envFile, "env-file", "", "Path to environment file")
-	c.fs.StringVar(&c.artifactDir, "artifact-dir", "", "Write run artifacts to the given directory")
-	c.fs.StringVar(&c.reportJSON, "report-json", "", "Write JSON report to the given path")
-	c.fs.StringVar(&c.reportJUnit, "report-junit", "", "Write JUnit XML report to the given path")
 	c.fs.StringVar(&c.workspace, "workspace", "", "Workspace directory to scan for request files")
-	c.fs.StringVar(&c.stateDir, "state-dir", "", "Directory for persisted runner state")
-	c.fs.DurationVar(&c.timeout, "timeout", 30*time.Second, "Request timeout")
-	c.fs.DurationVar(&c.runTimeout, "run-timeout", 0, "Whole-run timeout (0 disables)")
-	c.fs.BoolVar(&c.insecure, "insecure", false, "Skip TLS certificate verification")
-	c.fs.BoolVar(&c.follow, "follow", true, "Follow redirects")
-	c.fs.StringVar(&c.proxyURL, "proxy", "", "HTTP proxy URL")
 	c.fs.BoolVar(&c.recursive, "recursive", false, "Recursively scan workspace for request files")
-	c.fs.BoolVar(&c.persistVars, "persist-globals", false, "Persist runtime globals and file vars between runs")
-	c.fs.BoolVar(&c.persistAuth, "persist-auth", false, "Persist auth caches between runs")
-	c.fs.BoolVar(&c.history, "history", false, "Persist request history for runner executions")
 	c.fs.StringVar(&c.reqName, "request", "", "Request name to run")
 	c.fs.StringVar(&c.workflow, "workflow", "", "Workflow name to run")
 	c.fs.StringVar(&c.tag, "tag", "", "Run requests with the given tag")
+	c.fs.BoolVar(&c.all, "all", false, "Run all requests in the file")
+
+	c.fs.StringVar(&c.envName, "env", "", "Environment name to use")
+	c.fs.Var(&c.envGroups, "env-group", "Select a grouped environment as group=profile (repeatable)")
+	c.fs.StringVar(&c.envFile, "env-file", "", "Path to environment file")
+
 	c.fs.StringVar(&c.compareRaw, "compare", "", "Compare environments (comma/space separated)")
 	c.fs.StringVar(&c.compareBase, "compare-base", "", "Baseline environment for --compare")
+	c.fs.StringVar(&c.compareGroup, "compare-group", "", "Environment group varied by --compare")
+
+	c.fs.DurationVar(&c.timeout, "timeout", 30*time.Second, "Request timeout")
+	c.fs.BoolVar(&c.insecure, "insecure", false, "Skip TLS certificate verification")
+	c.fs.BoolVar(&c.follow, "follow", true, "Follow redirects")
+	c.fs.StringVar(&c.proxyURL, "proxy", "", "HTTP proxy URL")
+
+	c.fs.StringVar(&c.artifactDir, "artifact-dir", "", "Write run artifacts to the given directory")
+	c.fs.StringVar(&c.reportJSON, "report-json", "", "Write JSON report to the given path")
+	c.fs.StringVar(&c.reportJUnit, "report-junit", "", "Write JUnit XML report to the given path")
+	c.fs.StringVar(&c.stateDir, "state-dir", "", "Directory for persisted runner state")
+	c.fs.BoolVar(&c.persistVars, "persist-globals", false, "Persist runtime globals and file vars between runs")
+	c.fs.BoolVar(&c.persistAuth, "persist-auth", false, "Persist auth caches between runs")
+	c.fs.BoolVar(&c.history, "history", false, "Persist request history for runner executions")
+
+	c.fs.DurationVar(&c.runTimeout, "run-timeout", 0, "Whole-run timeout (0 disables)")
 	c.fs.StringVar(&c.exitCodeMode, "exit-code-mode", string(headless.ExitCodeDetailed), "Exit code mode: detailed or summary")
-	c.fs.BoolVar(&c.all, "all", false, "Run all requests in the file")
 	c.fs.BoolVar(&c.profile, "profile", false, "Profile the selected request run(s)")
+	c.fs.BoolVar(&c.failFast, "fail-fast", false, "Stop after the first failed result")
 	c.fs.BoolVar(&c.showVersion, "version", false, "Show resterm-runner version")
 }
 
 func (c *cmd) usage() {
-	if _, err := fmt.Fprintf(c.stderr, "Usage: %s [flags] [file]\n", c.use); err != nil {
-		return
-	}
-	if _, err := fmt.Fprintln(c.stderr); err != nil {
-		return
-	}
-	if _, err := fmt.Fprintln(c.stderr, "Flags:"); err != nil {
-		return
-	}
+	_, _ = fmt.Fprintf(c.Stderr, "Usage: %s [flags] [file]\n\nFlags:\n", c.Use)
 	c.fs.PrintDefaults()
 }
 
@@ -254,101 +145,51 @@ func (c *cmd) run() error {
 		return c.printVersion()
 	}
 	if c.runTimeout < 0 {
-		return ExitErr{
-			Err:  errors.New("run: --run-timeout must be >= 0"),
-			Code: headless.ExitUsage,
-		}
-	}
-	if c.filePath == "" && len(c.fs.Args()) > 0 {
-		c.filePath = c.fs.Arg(0)
-	}
-	if len(c.fs.Args()) > 1 {
-		return ExitErr{
-			Err:  fmt.Errorf("run: unexpected args: %s", strings.Join(c.fs.Args()[1:], " ")),
-			Code: headless.ExitUsage,
-		}
-	}
-	if isBlank(c.filePath) {
-		return ExitErr{Err: errors.New("run: --file is required"), Code: headless.ExitUsage}
+		return usageErr("run: --run-timeout must be >= 0")
 	}
 
-	targets, err := parseCompare(c.compareRaw)
+	rest := c.fs.Args()
+	if c.filePath == "" && len(rest) > 0 {
+		c.filePath = rest[0]
+	}
+	if len(rest) > 1 {
+		return usageErr("run: unexpected args: %s", strings.Join(rest[1:], " "))
+	}
+	if strings.TrimSpace(c.filePath) == "" {
+		return usageErr("run: --file is required")
+	}
+
+	compareTargets, err := parseCompare(c.compareRaw)
 	if err != nil {
-		return ExitErr{
-			Err:  fmt.Errorf("run: invalid --compare value: %w", err),
-			Code: headless.ExitUsage,
-		}
+		return usageErr("run: invalid --compare value: %w", err)
 	}
-
 	exitCodeMode, err := parseExitCodeMode(c.exitCodeMode)
 	if err != nil {
-		return ExitErr{
-			Err:  fmt.Errorf("run: %w", err),
-			Code: headless.ExitUsage,
-		}
+		return usageErr("run: %w", err)
 	}
 
 	ctx, cancel := c.runContext()
 	defer cancel()
 
-	pl, err := headless.Build(headless.Options{
-		Version:       c.version,
-		Source:        headless.Source{Path: c.filePath},
-		WorkspaceRoot: c.workspace,
-		Recursive:     c.recursive,
-		State: headless.StateOptions{
-			ArtifactDir:    c.artifactDir,
-			StateDir:       c.stateDir,
-			PersistGlobals: c.persistVars,
-			PersistAuth:    c.persistAuth,
-			History:        c.history,
-		},
-		Environment: headless.EnvironmentOptions{
-			Name:     c.envName,
-			FilePath: c.envFile,
-		},
-		Compare: headless.CompareOptions{
-			Targets: targets,
-			Base:    c.compareBase,
-		},
-		Profile: headless.ProfileOptions{
-			Enabled: c.profile,
-		},
-		HTTP: headless.HTTPOptions{
-			Timeout:            c.timeout,
-			FollowRedirects:    boolPtr(c.follow),
-			InsecureSkipVerify: c.insecure,
-			ProxyURL:           c.proxyURL,
-		},
-		Selection: headless.Selection{
-			Request:  c.reqName,
-			Workflow: c.workflow,
-			Tag:      c.tag,
-			All:      c.all,
-		},
-	})
+	pl, err := headless.Build(c.options(compareTargets))
 	if err != nil {
-		if headless.IsUsageError(err) {
-			return ExitErr{Err: fmt.Errorf("run: %w", err), Code: headless.ExitUsage}
-		}
-		return err
+		return runErr(err)
 	}
 	rep, err := headless.RunPlan(ctx, pl)
 	if err != nil {
-		if headless.IsUsageError(err) {
-			return ExitErr{Err: fmt.Errorf("run: %w", err), Code: headless.ExitUsage}
-		}
-		return err
+		return runErr(err)
 	}
-	if err := rep.WriteText(c.stdout); err != nil {
+
+	if err := rep.WriteText(c.Stdout); err != nil {
 		return fmt.Errorf("run: write output: %w", err)
 	}
-	if err := writeJSON(c.reportJSON, rep); err != nil {
+	if err := writeReport(c.reportJSON, rep.WriteJSON); err != nil {
 		return fmt.Errorf("run: write json report: %w", err)
 	}
-	if err := writeJUnit(c.reportJUnit, rep); err != nil {
+	if err := writeReport(c.reportJUnit, rep.WriteJUnit); err != nil {
 		return fmt.Errorf("run: write junit report: %w", err)
 	}
+
 	if rep.HasFailures() {
 		return ExitErr{
 			Err:  errors.New("one or more requests failed"),
@@ -358,25 +199,54 @@ func (c *cmd) run() error {
 	return nil
 }
 
-func parseExitCodeMode(raw string) (headless.ExitCodeMode, error) {
-	mode := headless.ExitCodeMode(strings.ToLower(strings.TrimSpace(raw)))
-	switch mode {
-	case "", headless.ExitCodeDetailed:
-		return headless.ExitCodeDetailed, nil
-	case headless.ExitCodeSummary:
-		return headless.ExitCodeSummary, nil
-	default:
-		return "", fmt.Errorf("unsupported --exit-code-mode %q", raw)
+func (c *cmd) options(compareTargets []string) headless.Options {
+	return headless.Options{
+		Version:       c.Version,
+		Source:        headless.Source{Path: c.filePath},
+		WorkspaceRoot: c.workspace,
+		Recursive:     c.recursive,
+		FailFast:      c.failFast,
+		State: headless.StateOptions{
+			ArtifactDir:    c.artifactDir,
+			StateDir:       c.stateDir,
+			PersistGlobals: c.persistVars,
+			PersistAuth:    c.persistAuth,
+			History:        c.history,
+		},
+		Environment: headless.EnvironmentOptions{
+			Name:      c.envName,
+			Selection: headless.EnvironmentSelection(c.envGroups),
+			FilePath:  c.envFile,
+		},
+		Compare: headless.CompareOptions{
+			Targets: compareTargets,
+			Base:    c.compareBase,
+			Group:   c.compareGroup,
+		},
+		Profile: headless.ProfileOptions{
+			Enabled: c.profile,
+		},
+		HTTP: headless.HTTPOptions{
+			Timeout:            c.timeout,
+			FollowRedirects:    &c.follow,
+			InsecureSkipVerify: c.insecure,
+			ProxyURL:           c.proxyURL,
+		},
+		Selection: headless.Selection{
+			Request:  c.reqName,
+			Workflow: c.workflow,
+			Tag:      c.tag,
+			All:      c.all,
+		},
 	}
 }
 
 func (c *cmd) runContext() (context.Context, context.CancelFunc) {
-	ctx := c.ctx
+	ctx := c.Context
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	// Tie the root run context to process cancellation and an optional wall-clock deadline.
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	if c.runTimeout <= 0 {
 		return ctx, stop
@@ -389,26 +259,24 @@ func (c *cmd) runContext() (context.Context, context.CancelFunc) {
 	}
 }
 
-func writeJSON(path string, rep *headless.Report) error {
-	return writeReport(path, func(w io.Writer) error {
-		return rep.WriteJSON(w)
-	})
+func parseExitCodeMode(raw string) (headless.ExitCodeMode, error) {
+	switch mode := headless.ExitCodeMode(strings.ToLower(strings.TrimSpace(raw))); mode {
+	case "", headless.ExitCodeDetailed:
+		return headless.ExitCodeDetailed, nil
+	case headless.ExitCodeSummary:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unsupported --exit-code-mode %q", raw)
+	}
 }
 
-func writeJUnit(path string, rep *headless.Report) error {
-	return writeReport(path, func(w io.Writer) error {
-		return rep.WriteJUnit(w)
-	})
-}
-
-func writeReport(path string, fn func(io.Writer) error) (err error) {
-	path = trim(path)
+func writeReport(path string, write func(io.Writer) error) (err error) {
+	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil
 	}
-
-	if merr := os.MkdirAll(filepath.Dir(path), 0o755); merr != nil {
-		return merr
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
 	}
 
 	f, err := os.Create(path)
@@ -420,63 +288,5 @@ func writeReport(path string, fn func(io.Writer) error) (err error) {
 			err = cerr
 		}
 	}()
-	return fn(f)
-}
-
-func (c *cmd) printVersion() error {
-	if _, err := fmt.Fprintf(c.stdout, "%s %s\n", c.use, c.version); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(c.stdout, "  commit: %s\n", c.commit); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(c.stdout, "  built:  %s\n", c.date); err != nil {
-		return err
-	}
-
-	sum, err := checksum()
-	if err != nil {
-		_, werr := fmt.Fprintf(c.stdout, "  sha256: unavailable (%v)\n", err)
-		return werr
-	}
-	_, err = fmt.Fprintf(c.stdout, "  sha256: %s\n", sum)
-	return err
-}
-
-func checksum() (string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return "", err
-	}
-
-	exe, err = filepath.EvalSymlinks(exe)
-	if err != nil {
-		return "", err
-	}
-
-	f, err := os.Open(exe)
-	if err != nil {
-		return "", err
-	}
-	sum, err := checksumReader(f)
-	if err != nil {
-		_ = f.Close()
-		return "", err
-	}
-	if err := f.Close(); err != nil {
-		return "", err
-	}
-	return sum, nil
-}
-
-func checksumReader(r io.Reader) (string, error) {
-	h := sha256.New()
-	if _, err := io.Copy(h, r); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-func boolPtr(v bool) *bool {
-	return &v
+	return write(f)
 }

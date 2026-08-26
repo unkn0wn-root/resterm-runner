@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,7 +31,7 @@ func TestRunHelpFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run --help: %v", err)
 	}
-	if !isBlank(out.String()) {
+	if strings.TrimSpace(out.String()) != "" {
 		t.Fatalf("expected empty stdout, got %q", out.String())
 	}
 	if !strings.Contains(errOut.String(), "Usage: resterm-runner [flags] [file]") {
@@ -53,7 +54,7 @@ func TestRunVersionFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run --version: %v", err)
 	}
-	if !isBlank(errOut.String()) {
+	if strings.TrimSpace(errOut.String()) != "" {
 		t.Fatalf("expected empty stderr, got %q", errOut.String())
 	}
 	got := out.String()
@@ -101,7 +102,7 @@ func TestRunVersionFlagUsesRuntimeBuildInfoFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run --version with build info fallback: %v", err)
 	}
-	if !isBlank(errOut.String()) {
+	if strings.TrimSpace(errOut.String()) != "" {
 		t.Fatalf("expected empty stderr, got %q", errOut.String())
 	}
 	got := out.String()
@@ -186,7 +187,7 @@ func TestRunRequestSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run request: %v", err)
 	}
-	if !isBlank(errOut.String()) {
+	if strings.TrimSpace(errOut.String()) != "" {
 		t.Fatalf("expected empty stderr, got %q", errOut.String())
 	}
 	if !strings.Contains(out.String(), "PASS GET ok") {
@@ -519,7 +520,7 @@ func TestRunCompareWritesJSONReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run compare: %v", err)
 	}
-	if !isBlank(errOut.String()) {
+	if strings.TrimSpace(errOut.String()) != "" {
 		t.Fatalf("expected empty stderr, got %q", errOut.String())
 	}
 	if !strings.Contains(out.String(), "PASS COMPARE cmp") {
@@ -559,5 +560,232 @@ func TestRunCompareWritesJSONReport(t *testing.T) {
 	}
 	if len(item.Steps) != 2 || item.Steps[0].Environment != "dev" || item.Steps[1].Environment != "stage" {
 		t.Fatalf("unexpected compare steps: %+v", item.Steps)
+	}
+}
+
+func TestRunGroupedEnvironmentSelection(t *testing.T) {
+	var requestPath atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestPath.Store(r.URL.Path)
+		_, _ = fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "grouped.http")
+	envFile := filepath.Join(dir, "resterm.env.json")
+	report := filepath.Join(dir, "report.json")
+	src := fmt.Sprintf("# @name grouped\nGET %s/{{api.path}}/{{app.id}}\n", srv.URL)
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatalf("write request file: %v", err)
+	}
+	envs := `{
+  "$groups": {
+    "api": {
+      "$default": "dev",
+      "dev": {"api.path": "dev"},
+      "prod": {"api.path": "prod"}
+    },
+    "app": {
+      "$default": "dev app 1",
+      "dev app 1": {"app.id": "one"},
+      "dev app 2": {"app.id": "two"}
+    }
+  }
+}`
+	if err := os.WriteFile(envFile, []byte(envs), 0o644); err != nil {
+		t.Fatalf("write environment file: %v", err)
+	}
+
+	err := Run([]string{
+		"--file", file,
+		"--env-file", envFile,
+		"--env-group", "api=prod",
+		"--env-group", "app=dev app 2",
+		"--report-json", report,
+	}, Opt{
+		Use:    "resterm-runner",
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+	if err != nil {
+		t.Fatalf("Run grouped environment: %v", err)
+	}
+	if got, _ := requestPath.Load().(string); got != "/prod/two" {
+		t.Fatalf("request path = %q, want /prod/two", got)
+	}
+
+	data, err := os.ReadFile(report)
+	if err != nil {
+		t.Fatalf("read report: %v", err)
+	}
+	var got struct {
+		EnvironmentSelection map[string]string `json:"environmentSelection"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+	if got.EnvironmentSelection["api"] != "prod" || got.EnvironmentSelection["app"] != "dev app 2" {
+		t.Fatalf("environment selection = %v", got.EnvironmentSelection)
+	}
+}
+
+func TestRunGroupedCompare(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "grouped-compare.http")
+	envFile := filepath.Join(dir, "resterm.env.json")
+	report := filepath.Join(dir, "report.json")
+	src := fmt.Sprintf("# @name groupedCompare\nGET %s/{{app.path}}\n", srv.URL)
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatalf("write request file: %v", err)
+	}
+	envs := `{
+  "$groups": {
+    "app": {
+      "$default": "dev app 1",
+      "dev app 1": {"app.path": "one"},
+      "dev app 2": {"app.path": "two"}
+    }
+  }
+}`
+	if err := os.WriteFile(envFile, []byte(envs), 0o644); err != nil {
+		t.Fatalf("write environment file: %v", err)
+	}
+
+	err := Run([]string{
+		"--file", file,
+		"--env-file", envFile,
+		"--compare", "dev app 1,dev app 2",
+		"--compare-group", "app",
+		"--report-json", report,
+	}, Opt{
+		Use:    "resterm-runner",
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+	if err != nil {
+		t.Fatalf("Run grouped compare: %v", err)
+	}
+
+	data, err := os.ReadFile(report)
+	if err != nil {
+		t.Fatalf("read report: %v", err)
+	}
+	var got struct {
+		Results []struct {
+			Compare struct {
+				Group string `json:"group"`
+			} `json:"compare"`
+			Steps []struct {
+				EnvironmentSelection map[string]string `json:"environmentSelection"`
+			} `json:"steps"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+	if len(got.Results) != 1 || got.Results[0].Compare.Group != "app" {
+		t.Fatalf("grouped compare result = %+v", got.Results)
+	}
+	steps := got.Results[0].Steps
+	if len(steps) != 2 ||
+		steps[0].EnvironmentSelection["app"] != "dev app 1" ||
+		steps[1].EnvironmentSelection["app"] != "dev app 2" {
+		t.Fatalf("grouped compare steps = %+v", steps)
+	}
+}
+
+func TestRunFailFastSkipsRemainingRequests(t *testing.T) {
+	var secondCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/second" {
+			secondCalls.Add(1)
+		}
+		_, _ = fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "fail-fast.http")
+	report := filepath.Join(dir, "report.json")
+	src := strings.Join([]string{
+		"### First",
+		"# @name first",
+		"# @assert response.statusCode == 201",
+		fmt.Sprintf("GET %s/first", srv.URL),
+		"",
+		"### Second",
+		"# @name second",
+		fmt.Sprintf("GET %s/second", srv.URL),
+		"",
+	}, "\n")
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatalf("write request file: %v", err)
+	}
+
+	err := Run([]string{
+		"--file", file,
+		"--all",
+		"--fail-fast",
+		"--report-json", report,
+	}, Opt{
+		Use:    "resterm-runner",
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+	if err == nil {
+		t.Fatal("expected first request to fail")
+	}
+	if got := secondCalls.Load(); got != 0 {
+		t.Fatalf("second request calls = %d, want 0", got)
+	}
+
+	data, readErr := os.ReadFile(report)
+	if readErr != nil {
+		t.Fatalf("read report: %v", readErr)
+	}
+	var got struct {
+		Summary struct {
+			Skipped    int    `json:"skipped"`
+			StopReason string `json:"stopReason"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+	if got.Summary.Skipped != 1 || got.Summary.StopReason != "fail_fast" {
+		t.Fatalf("summary = %+v, want one fail-fast skip", got.Summary)
+	}
+}
+
+func TestRunReportsParseWarnings(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "warning.http")
+	src := fmt.Sprintf("# @name warning\n# @nmae typo\nGET %s\n", srv.URL)
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatalf("write request file: %v", err)
+	}
+
+	var out strings.Builder
+	err := Run([]string{"--file", file}, Opt{
+		Use:    "resterm-runner",
+		Stdout: &out,
+		Stderr: io.Discard,
+	})
+	if err != nil {
+		t.Fatalf("Run warning request: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "WARN") || !strings.Contains(got, "@nmae") {
+		t.Fatalf("output does not include parse warning: %q", got)
 	}
 }
