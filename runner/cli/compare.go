@@ -8,36 +8,43 @@ import (
 const sharedEnvKey = "$shared"
 
 func parseCompare(raw string) ([]string, error) {
-	raw = trim(raw)
-	if raw == "" {
+	fields := compareFields(strings.TrimSpace(raw))
+	if len(fields) == 0 {
 		return nil, nil
 	}
 
-	r := strings.NewReplacer(",", " ", ";", " ")
-	fd := strings.Fields(r.Replace(raw))
-	if len(fd) == 0 {
-		return nil, nil
-	}
-
-	seen := make(map[string]struct{}, len(fd))
-	out := make([]string, 0, len(fd))
-	for _, f := range fd {
-		if isReservedEnv(f) {
-			return nil, fmt.Errorf("environment %q is reserved for shared defaults", f)
+	seen := make(map[string]struct{}, len(fields))
+	out := make([]string, 0, len(fields))
+	for _, field := range fields {
+		name := strings.TrimSpace(field)
+		if name == "" {
+			continue
 		}
-		key := strings.ToLower(f)
-		if _, ok := seen[key]; ok {
+		if strings.EqualFold(name, sharedEnvKey) {
+			return nil, fmt.Errorf("environment %q is reserved for shared defaults", name)
+		}
+
+		key := strings.ToLower(name)
+		if _, dup := seen[key]; dup {
 			continue
 		}
 		seen[key] = struct{}{}
-		out = append(out, f)
+		out = append(out, name)
 	}
+
 	if len(out) < 2 {
 		return nil, fmt.Errorf("expected at least two environments, got %d", len(out))
 	}
 	return out, nil
 }
 
-func isReservedEnv(name string) bool {
-	return strings.EqualFold(trim(name), sharedEnvKey)
+func compareFields(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	// Explicit separators allow spaces in environment names.
+	if strings.ContainsAny(raw, ",;") {
+		return strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ';' })
+	}
+	return strings.Fields(raw)
 }

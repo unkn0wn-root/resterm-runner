@@ -1,6 +1,11 @@
 package cli
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/unkn0wn-root/resterm/headless"
+)
 
 type exitCoder interface {
 	ExitCode() int
@@ -33,9 +38,21 @@ func ExitCode(err error) int {
 	if err == nil {
 		return 0
 	}
+
 	var ex exitCoder
 	if errors.As(err, &ex) {
 		return ex.ExitCode()
 	}
 	return 1
+}
+
+func usageErr(format string, args ...any) error {
+	return ExitErr{Err: fmt.Errorf(format, args...), Code: headless.ExitUsage}
+}
+
+func runErr(err error) error {
+	if headless.IsUsageError(err) {
+		return usageErr("run: %w", err)
+	}
+	return err
 }

@@ -32,6 +32,14 @@ Run requests matching a tag:
 resterm-runner --file api.http --tag smoke --env staging
 ```
 
+Select profiles from a grouped environment file (repeat `--env-group` for each group):
+
+```sh
+resterm-runner --file api.http \
+  --env-group api=production \
+  --env-group 'credentials=ci'
+```
+
 Compare the same request across two environments and generate a JUnit report:
 
 ```sh
@@ -53,6 +61,7 @@ resterm-runner api.http --all
 |------|---------|-------------|
 | `--file` | | Path to `.http`/`.rest` file |
 | `--env` | | Environment name |
+| `--env-group` | | Select a grouped environment as `group=profile` (repeatable) |
 | `--env-file` | | Path to environment file |
 | `--request` | | Run a specific named request |
 | `--workflow` | | Run a named workflow |
@@ -60,6 +69,7 @@ resterm-runner api.http --all
 | `--all` | `false` | Run all requests in the file |
 | `--compare` | | Compare environments (comma or space separated) |
 | `--compare-base` | | Baseline environment for comparison |
+| `--compare-group` | | Environment group varied by `--compare` |
 | `--exit-code-mode` | `detailed` | Exit code mode: `detailed` or `summary` |
 | `--timeout` | `30s` | Request timeout |
 | `--run-timeout` | `0` | Whole-run timeout; `0` disables it |
@@ -76,7 +86,10 @@ resterm-runner api.http --all
 | `--persist-auth` | `false` | Persist authentication caches between runs |
 | `--history` | `false` | Persist request history |
 | `--profile` | `false` | Profile request execution |
+| `--fail-fast` | `false` | Stop after the first failed top-level result |
 | `--version` | | Print version and exit |
+
+For grouped comparisons, separate profile names with commas so names may contain spaces, for example `--compare 'dev app 1,dev app 2' --compare-group app`.
 
 ## Exit codes
 
